@@ -29,6 +29,7 @@ This is an official implementation of the following paper:
 - CIFAR-10
 - CIFAR-100
 - ImageNet-LT
+- ImageNet
 
 
 
