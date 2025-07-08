@@ -306,10 +306,17 @@ class Local(object):
                  data_client,
                  class_list: int):
         args = args_parser()
+        if args.dataset.lower() == 'cifar10':
+            args.num_classes = 10
+        elif args.dataset.lower() == 'cifar100':
+            args.num_classes = 100
+        elif args.dataset.lower() == 'imagenet':
+            args.num_classes = 1000
 
         self.data_client = data_client
         self.device = args.device
         self.class_compose = class_list
+        self.dataset = args.dataset.lower()
         self.criterion = CrossEntropyLoss().to(args.device)
         self.kd_criterion = KDLoss(T=args.T).to(args.device)
         self.bkd2_criterion = BKD2Loss(T=args.T).to(args.device)
@@ -379,9 +386,14 @@ class Local(object):
         return truth_gradient_avg
 
     def local_train(self, args, global_params, clip_model, text_features):
-        transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip()])
+        if self.dataset == 'imagenet':
+            transform_train = transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip()])
+        else:
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip()])
 
         self.local_model.load_state_dict(global_params)
         self.local_model.train()
@@ -416,6 +428,12 @@ class Local(object):
 
 def CLIP2FL():
     args = args_parser()
+    if args.dataset.lower() == 'cifar10':
+        args.num_classes = 10
+    elif args.dataset.lower() == 'cifar100':
+        args.num_classes = 100
+    elif args.dataset.lower() == 'imagenet':
+        args.num_classes = 1000
     print(
         'imb_factor:{ib}, non_iid:{non_iid}\n'
         'lr_net:{lr_net}, lr_feature:{lr_feature}, num_of_feature:{num_of_feature}\n '
@@ -446,32 +464,38 @@ def CLIP2FL():
     if not os.path.exists(args.result_save):
         os.mkdir(args.result_save)
     # Load data
-    transform_all = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+    if args.dataset.lower() == 'imagenet':
+        transform_all = transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+    else:
+        transform_all = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
 
     # CLIP Loading
     clip_model, preprocess = clip.load('ViT-B/32', args.device)
 
-    if args.num_classes == 10:
+    if args.dataset.lower() == 'cifar10':
         data_local_training = datasets.CIFAR10(args.path_cifar10, train=True, download=True, transform=transform_all)
         clip_data_local_training = datasets.CIFAR10(args.path_cifar10, train=True, download=True, transform=preprocess)
         data_global_test = datasets.CIFAR10(args.path_cifar10, train=False, transform=transform_all)
-    elif args.num_classes == 100:
+        label_name = datasets.CIFAR10(args.path_cifar10, train=True, download=True).classes
+    elif args.dataset.lower() == 'cifar100':
         data_local_training = datasets.CIFAR100(args.path_cifar100, train=True, download=True, transform=transform_all)
         clip_data_local_training = datasets.CIFAR100(args.path_cifar100, train=True, download=True, transform=preprocess)
         data_global_test = datasets.CIFAR100(args.path_cifar100, train=False, transform=transform_all)
+        label_name = datasets.CIFAR100(args.path_cifar100, train=True, download=True).classes
+    elif args.dataset.lower() == 'imagenet':
+        data_local_training = datasets.ImageFolder(os.path.join(args.path_imagenet, 'train'), transform=transform_all)
+        clip_data_local_training = datasets.ImageFolder(os.path.join(args.path_imagenet, 'train'), transform=preprocess)
+        data_global_test = datasets.ImageFolder(os.path.join(args.path_imagenet, 'val'), transform=transform_all)
+        label_name = data_local_training.classes
 
-    # get label_name from datasets
-    if args.num_classes == 10:
-        cifar10_path = "data/CIFAR10/cifar-10-batches-py"
-        obj_cifar10 = load_labels_name(os.path.join(cifar10_path, 'batches.meta'))  
-        label_name = obj_cifar10['label_names']
-    elif args.num_classes == 100:
-        cifar100_path = "data/CIFAR100/cifar-100-python"
-        obj_cifar100 = load_labels_name(os.path.join(cifar100_path, 'meta'))  
-        label_name = obj_cifar100['fine_label_names']
 
     # CLIP PART and Loading data
     clip_model.eval()
